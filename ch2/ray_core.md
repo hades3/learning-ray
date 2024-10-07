@@ -151,7 +151,7 @@ follow\_up\_task의 첫째 줄에서 retrieve\_result가 튜플이라고 가정�
 
 후속 태스크는 개별 처리 작업이 완료된 후에만 실행되도록 스케쥴링된다.
 
-![img.png](ch2img1.png)
+[##_Image|kage@cANf3Z/btsJTDtB8Hy/lNlaVx7oT74weUcMIq18F1/img.png|CDM|1.3|{"originWidth":802,"originHeight":690,"style":"alignCenter","width":761,"height":655}_##]
 
 #### **클래스에서 액터로**
 
@@ -210,7 +210,7 @@ print(ray.get(tracker.counts.remote()))
 
 워커 노드는 여러 워커 프로세스로 구성된다. 워커 프로세스는 워커라고도 한다. 각 워커는 고유한 ID, IP주소 및 참조할 포트를 가진다. 워커는 명령받은 일을 실행하는 컴포넌트이다.
 
-각 워커 노드에는 레이렛이라는 컴포넌트가 있다. 레이렛은 워커 프로세스를 관리한다. 레이렛은 태스크 간에 공유되고 태스크 스케줄러와 오브젝트 스토어라는 2가지 구성요소로 이루어져 있다.
+각 워커 노드에는 레이렛이라는 컴포넌트가 있다. 레이렛은 워커 프로세스를 관리한다. 레이렛은 태스크 간에 공유되고, 태스크 스케줄러와 오브젝트 스토어라는 2가지 구성요소로 이루어져 있다.
 
 오브젝트 스토어를 먼저 살펴보자. 레이 클러스터의 각 노드에는 해당 노드의 레이렛 내에 오브젝트 스토어가 장착되어 있고, 저장된 모든 오브젝트가 클러스터의 분산 오브젝트 스토어를 구성한다. 오브젝트 스토어는 동일한 노드에 있는 워커 간의 공유 메모리 풀을 관리하며 워커가 다른 노드에 생성된 오브젝트에 접근하도록 한다.
 
@@ -220,4 +220,144 @@ print(ray.get(tracker.counts.remote()))
 
 워커는 자신이 호출하는 모든 태스크에 대한 메타데이터와 해당 태스크에서 반환되는 오브젝트 레퍼런스를 저장한다. 소유권이라는 개념은 오브젝트 레퍼런스를 생성하는 프로세스가 오브젝트 레퍼런스의 처리도 담당한다는 의미이다. 예를 들어 워커 프로세스는 소유권 테이블을 가지고 있어, 장애가 발생하면 자신이 소유한 오브젝트 레퍼런스를 추적한다. 
 
-![img.png](ch2img2.png)
+[##_Image|kage@cmHZ8b/btsJTBCzCn3/RTfvLEJ7nkyFe3Q8XB1Z8K/img.png|CDM|1.3|{"originWidth":958,"originHeight":642,"style":"alignCenter"}_##]
+
+### **헤드 노드**
+
+헤드 노드에는 드라이버 프로세스가 있다. 드라이버 프로세스는 스스로 태스크를 제출해도 실행은 할 수 없다. 또한 헤드 노드에는 워커 프로세스가 있고, 이는 단일 노드로 구성된 로컬 클러스터를 실행하는 데 중요하다.
+
+헤드 노드는 다른 워커 노드 기능에 클러스터 관리를 담당하는 프로세스를 추가로 실행한다. 이것은 클러스터에 대한 전역 정보를 전달하는 중요한 컴포넌트이다. GCS는 시스템 레벨 메타데이터 같은 정보를 저장하는 키-값 저장소이다. 
+
+### **분산된 스케줄링과 실행**
+
+클러스터 오케스트레이션과 노드가 태스크를 관리하고 계획하며 실행하는 방법을 간략하게 알아보자. 워커 노드에 대해서 설명하면서, 레이를 사용해 워크로드를 분산할 때 몇 가지 컴포넌트가 있다고 했다. 프로세스와 관련된 단계와 복잡성을 정리해보자.
+
+#### **분산된 메모리**
+
+레이렛의 오브젝트 스토어는 노드에서 메모리를 관리한다. 때로는 노드 사이에 오브젝트를 전송해야 하는 경우가 있는데, 이를 분산 오브젝트 전송이라고 부른다. 이는 워커가 태스크를 실행하는 데 필요한 오브젝트를 갖도록 하는 원격 종속성 해결을 할 때 사용한다.
+
+#### **통신**
+
+레이 클러스터에서 일어나는 오브젝트 전송 같은 대부분의 통신은 gRPC를 사용한다.
+
+#### **리소스 관리 및 수행**
+
+노드에서 레이렛은 리소스를 할당하고 태스크 소유자에게 워커 프로세스를 임대하는 역할을 맡는다. 노드 전체의 모든 스케줄러가 분산 스케줄러를 형성하고 이것은 효과적으로 노드가 다른 노드에 태스크를 스케줄링한다. 로컬 스케줄러는 GCS와의 통신을 통해 다른 노드의 리소스 상황을 파악한다.
+
+#### **태스크 실행**
+
+실행을 위해서 태스크가 제출되면 모든 의존성을 해결해야 한다.
+
+## **레이를 사용한 간단한 맵 리듀스**
+
+단순하게 맵리듀스 구현을 여러 문서에 걸쳐서 특정 단어가 나온 횟수를 세는 사용 사례로 살펴보자.
+
+1\. 매핑 단계 : 문서 집합을 가져와서 기능에 따라 해당 요소(예를 들어, 문서에 포함된 단어)들을 변환하거나 매핑한다. 이 단계에서는 설계 상 키-값 쌍을 생성한다. 키는 문서의 요소를 나타내고, 값은 단순히 해당 요소에 대해서 계산하려는 지표이다. 단어를 세는 작업을 하기 때문에 문서에서 단어를 만날 때마다 map 함수는 나타내는 단어를 (단어, 1) 형태의 한 쌍을 내보내서 해당 단어가 한 번 발견되었음을 나타낸다.
+
+2\. 셔플 단계 : 키에 따라서 매핑 단계의 모든 출력을 수집한 뒤 그룹화한다. 분산 설정에서 작업하면 동일 키가 여러 컴퓨팅 노드에서 있을 수 있기에 노드 간에 데이터를 섞어야 한다. 구체적인 사용 사례에서 그룹화가 무엇을 의미하는지 알기 위해서 매핑 단계에서 총 4개의 항목이 생성되었다고 가정해보자. 그런 다음 셔플은 같은 단어가 같은 노드에 있는 모든 항목을 같이 함께 배치한다.
+
+3\. 리듀스 단계 : 셔플 단계에서 요소를 집계하거나 리듀스한다. 앞서 설명한 예를 이으면, 최종 개수를 알기 위해서 각 노드에서 발생하는 모든 단어를 단순하게 요약한다. (단어, 1) 4개를 (단어, 4)로 요약한다.
+
+```
+import ray
+
+ray.init()
+
+import subprocess
+
+zen_of_python = subprocess.check_output(["python", "-c", "import this"])
+corpus = zen_of_python.split()  # 단어 모음
+num_partitions = 3
+
+num_partition = len(corpus) // num_partitions
+
+partitions = [corpus[i*num_partition : (i+1)*num_partition] for i in range(num_partitions)]
+```
+
+[##_Image|kage@yKOWP/btsJVarGz6D/K3xV65RYXdSlBS7XgxGZo0/img.png|CDM|1.3|{"originWidth":1280,"originHeight":581,"style":"alignCenter"}_##]
+
+#### **매핑과 셔플**
+
+매핑 단계를 정의하기 위해서는 각 문서에 적용되는 맵 함수가 필요하다. 이번에는 문서에서 찾은 각 단어에 대한 쌍 (단어, 1)을 방출하려고 한다. 파이썬 문자열로 로드된 간단한 텍스트 문서의 경우 맵 함수는 다음과 같다.
+
+```
+def map_function(document):
+    yield document.lower(), 1
+```
+
+단어를 소문자로 바꾸고, (단어, 1) 형태로 반환한다.
+
+```
+@ray.remote
+def apply_map(corpus, num_partitions):
+    map_results = [list() for _ in range(num_partitions)]
+    for document in corpus:
+        for result in map_function(document):
+            first_letter = result[0].decode("utf-8")[0]
+            word_index = ord(first_letter) % num_partitions
+            map_results[word_index].append(result)
+    return map_results
+```
+
+corpus에 있는 단어들을 map\_function에 적용하고, 단어를 ord를 통해 숫자로 바꾸고, 나머지를 구해 파티션 번호로 사용한다. 그 파티션 번호에 (단어, 1)을 삽입한다. 모두 삽입했으면, 파티션들을 반환한다.
+
+```
+map_results = [
+    apply_map.remote(data, num_partitions)
+    for data in partitions
+]
+```
+
+말뭉치를 나누어 놓은 data를 워커에 할당해 분류한다.
+
+```
+for i in range(num_partitions):
+    mapper_results = ray.get(map_results[i])
+    for j, result in enumerate(mapper_results):
+        print(f"Mapper {i}, return value {j}: {result[:2]}")
+        
+"""
+Mapper 0, return value 0: [(b'of', 1), (b'is', 1)]
+Mapper 0, return value 1: [(b'python,', 1), (b'peters', 1)]
+Mapper 0, return value 2: [(b'the', 1), (b'zen', 1)]
+Mapper 1, return value 0: [(b'unless', 1), (b'in', 1)]
+Mapper 1, return value 1: [(b'although', 1), (b'practicality', 1)]
+Mapper 1, return value 2: [(b'beats', 1), (b'errors', 1)]
+Mapper 2, return value 0: [(b'is', 1), (b'is', 1)]
+Mapper 2, return value 1: [(b'although', 1), (b'a', 1)]
+Mapper 2, return value 2: [(b'better', 1), (b'than', 1)]
+"""
+```
+
+워커 i가 분류한 결과 중, j번째 파티션은 ~라는 의미이다. 같은 단어가 같은 파티션에 있는 것으로 보아 셔플까지 이루어진 것을 알 수 있다.
+
+#### **리듀스**
+
+```
+@ray.remote
+def apply_reduce(results):
+    reduce_results = dict()
+    for res in results:
+        for key, value in res:
+            if key not in reduce_results:
+                reduce_results[key] = 0
+            reduce_results[key] += value
+    return reduce_results
+```
+
+단어의 개수를 하나씩 증가시킨다.
+
+```
+outputs = []
+for i in range(num_partitions):
+    outputs.append(
+        apply_reduce.remote([partition[i] for partition in ray.get(map_results)])
+    )
+counts = {k: v for output in ray.get(outputs) for k, v in output.items()}
+
+sorted_counts = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+for count in sorted_counts:
+    print(f"{count[0].decode('utf-8')}: {count[1]}")
+```
+
+map\_results는 워커가 셔플까지 해놓은 파티션들을 저장하고 있는 참조 객체의 모임이다.  ray.get을 해서 각 워커가 셔플까지 해놓은 파티션들로 바꾼 후, i번째 파티션들을 모두 모아 apply\_reduce를 수행하여 (단어:개수)의 딕셔너리를 가리키는 참조 객체를 outputs에 넣는다.

@@ -1,81 +1,58 @@
-import ray, time
+import ray
 
 ray.init()
 
-print(ray.cluster_resources())  # 레이 클러스터의 사용량 확인
+import subprocess
 
-database = ["Learning", "Ray", "Flexible", "Distributed", "Python", "for", "Machine", "Learning"]
+zen_of_python = subprocess.check_output(["python", "-c", "import this"])
+corpus = zen_of_python.split()  # 단어 모음
+num_partitions = 3
 
-def retrieve(item):
-    time.sleep(item / 10)
-    return item, database[item]
+num_partition = len(corpus) // num_partitions
 
-def print_runtime(input_data, start_time):
-    print(f'Runtime: {time.time() - start_time:.2f} seconds, data:')
-    print(*input_data, sep="\n")
+partitions = [corpus[i*num_partition : (i+1)*num_partition] for i in range(num_partitions)]
 
-# start = time.time()
-# data = [retrieve(item) for item in range(8)]
-# print_runtime(data, start)
 
-# @ray.remote # 어떤 파이썬 함수이든 레이 태스크로 만든다
-# def retrieve_task(item):    # ray.remote를 붙이기 위해 만든 함수일 뿐임
-#     return retrieve(item)
-#
-# start = time.time()
-# object_references = [retrieve_task.remote(item) for item in range(8)]
-# data = ray.get(object_references)
-# print_runtime(data, start)
+def map_function(document):
+    yield document.lower(), 1
 
-db_object_ref = ray.put(database)
+@ray.remote
+def apply_map(corpus, num_partitions):
+    map_results = [list() for _ in range(num_partitions)]
+    for document in corpus:
+        for result in map_function(document):
+            first_letter = result[0].decode("utf-8")[0]
+            word_index = ord(first_letter) % num_partitions
+            map_results[word_index].append(result)
+    return map_results
 
-@ray.remote # 어떤 파이썬 함수이든 레이 태스크로 만든다
-def retrieve_task(item, db):    # ray.remote를 붙이기 위해 만든 함수일 뿐임
-    time.sleep(item / 10)
-    return item, db[item]
-
-start = time.time()
-object_references = [retrieve_task.remote(item, db_object_ref) for item in range(8)]
-data = ray.get(object_references)
-print_runtime(data, start)
-
-start = time.time()
-object_references = [
-    retrieve_task.remote(item, db_object_ref) for item in range(8)
+map_results = [
+    apply_map.remote(data, num_partitions)
+    for data in partitions
 ]
-all_data = []
 
-while len(object_references) > 0:
-    finished, object_references = ray.wait(
-        object_references, num_returns=2, timeout=7.0
+for i in range(num_partitions):
+    mapper_results = ray.get(map_results[i])
+    for j, result in enumerate(mapper_results):
+        print(f"Mapper {i}, return value {j}: {result[:2]}")
+
+@ray.remote
+def apply_reduce(results):
+    reduce_results = dict()
+    for res in results:
+        for key, value in res:
+            if key not in reduce_results:
+                reduce_results[key] = 0
+            reduce_results[key] += value
+    return reduce_results
+
+outputs = []
+for i in range(num_partitions):
+    outputs.append(
+        apply_reduce.remote([partition[i] for partition in ray.get(map_results)])
     )
-    data = ray.get(finished)
-    print_runtime(data, start)
-    all_data.extend(data)
+counts = {k: v for output in ray.get(outputs) for k, v in output.items()}
 
-print_runtime(all_data, start)
-
-@ray.remote
-class DataTracker:
-    def __init__(self):
-        self._counts = 0
-
-    def increment(self):
-        self._counts += 1
-
-    def counts(self):
-        return self._counts
-
-@ray.remote
-def retrieve_tracker_task(item, tracker, db):
-    time.sleep(item / 10)
-    tracker.increment.remote()
-    return item, db[item]
-
-tracker = DataTracker.remote()
-
-object_references = [retrieve_tracker_task.remote(item, tracker, db_object_ref) for item in range(8)]
-data = ray.get(object_references)
-
-print(data)
-print(ray.get(tracker.counts.remote()))
+sorted_counts = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+for count in sorted_counts:
+    print(f"{count[0].decode('utf-8')}: {count[1]}")
